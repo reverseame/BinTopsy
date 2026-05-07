@@ -96,6 +96,7 @@ def generate_call_graph(r2, output_dir):
 
 
 def generate_function_graph(r2, func_target, output_dir, seek_needed=True):
+    """Returns (ok, pdf_filename, display_name) so callers can build an index."""
     if seek_needed:
         log(f"Processing function graph: {func_target}")
         try:
@@ -103,18 +104,63 @@ def generate_function_graph(r2, func_target, output_dir, seek_needed=True):
             disasm_check = r2.cmdj("pdfj")
             if not disasm_check:
                 error(f"Function '{func_target}' not found or invalid.")
-                return False
+                return False, None, func_target
             actual_func_name = disasm_check.get('name', func_target)
         except Exception as e:
             error(f"Could not seek to function {func_target}: {e}")
-            return False
+            return False, None, func_target
     else:
         actual_func_name = func_target
 
     safe_name = re.sub(r'[^\w\-_. ]', '_', actual_func_name)
-    dot_data = r2.cmd("agfd")
     output_path = os.path.join(output_dir, f"cfg_{safe_name}")
-    return render_dot_to_pdf(dot_data, output_path)
+    dot_data = r2.cmd("agfd")
+    ok = render_dot_to_pdf(dot_data, output_path)
+    return ok, (f"cfg_{safe_name}.pdf" if ok else None), actual_func_name
+
+
+def write_gallery_index(output_dir, entries, sample_name):
+    """Write an HTML index linking to every CFG PDF. `entries` is a list of
+    dicts with keys {pdf, name, cc, size}. Sorted by CC descending so the
+    juiciest functions surface first."""
+    if not entries:
+        return
+
+    entries = sorted(entries, key=lambda e: (-e.get("cc", 0), e["name"]))
+    rows = []
+    for e in entries:
+        rows.append(
+            f'<tr><td>{e["name"]}</td>'
+            f'<td>{e.get("cc", 0)}</td>'
+            f'<td>{e.get("size", 0)}</td>'
+            f'<td><a href="{e["pdf"]}" target="_blank">view CFG</a></td></tr>'
+        )
+
+    html = f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>BinTopsy CFG Gallery — {sample_name}</title>
+<style>
+ body {{ font-family: -apple-system, sans-serif; margin: 2rem; }}
+ h1 {{ font-size: 1.4rem; }}
+ table {{ border-collapse: collapse; width: 100%; }}
+ th, td {{ padding: 6px 12px; border-bottom: 1px solid #ddd; text-align: left; }}
+ th {{ background: #f4f4f4; }}
+ tr:hover {{ background: #fffbe6; }}
+ .meta {{ color: #666; font-size: 0.9rem; }}
+</style></head>
+<body>
+<h1>CFG Gallery — {sample_name}</h1>
+<p class="meta">{len(entries)} functions, sorted by cyclomatic complexity (descending).</p>
+<table>
+<thead><tr><th>Function</th><th>CC</th><th>Size (bytes)</th><th>Graph</th></tr></thead>
+<tbody>
+{''.join(rows)}
+</tbody></table>
+</body></html>"""
+
+    index_path = os.path.join(output_dir, "index.html")
+    with open(index_path, 'w') as f:
+        f.write(html)
+    log(f"Gallery index: {index_path}")
 
 
 def analyze_binary(filename, args):
@@ -151,14 +197,24 @@ def analyze_binary(filename, args):
             return
 
         log(f"Starting batch generation for {len(funcs)} functions. Grab a coffee.")
+        gallery = []
         for i, f in enumerate(funcs, 1):
             f_addr = f.get('offset')
             f_name = f.get('name', 'unknown')
             r2.cmd(f"s {f_addr}")
-            generate_function_graph(r2, f_name, args.output_dir, seek_needed=False)
+            ok, pdf, name = generate_function_graph(r2, f_name, args.output_dir,
+                                                    seek_needed=False)
+            if ok:
+                gallery.append({
+                    "pdf": pdf,
+                    "name": name,
+                    "cc": f.get("cc", 0),
+                    "size": f.get("size", 0),
+                })
             if i % 10 == 0:
                 sys.stderr.write(f"[{i}/{len(funcs)}]\r")
-        log(f"Batch complete. {len(funcs)} graphs attempted.")
+        log(f"Batch complete. {len(funcs)} graphs attempted, {len(gallery)} succeeded.")
+        write_gallery_index(args.output_dir, gallery, os.path.basename(filename))
         return
 
     # MODE 3: Single function CFG

@@ -18,6 +18,11 @@ entropy_heatmap.*
 graph.pdf
 r2_graphs/
 xref_graphs/
+.vt_cache.json
+report/
+
+# Pytest
+.pytest_cache/
 
 # Editor / OS
 .DS_Store

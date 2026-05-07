@@ -128,12 +128,17 @@ def main():
             sys.exit(1)
         with open(args.file, "rb") as f:
             code_bytes = f.read()
+        if not code_bytes:
+            print(f"[-] File is empty: {args.file}", file=sys.stderr)
+            sys.exit(1)
     else:
         code_bytes = clean_hex_input(args.string)
-
-    if not code_bytes:
-        print("[-] No data to disassemble.", file=sys.stderr)
-        sys.exit(1)
+        if not code_bytes:
+            print("[-] Could not extract any hex bytes from the input string.",
+                  file=sys.stderr)
+            print("    Hint: pass bytes as '55 48 89 e5', '0x55,0x48' or '\\x55\\x48'.",
+                  file=sys.stderr)
+            sys.exit(1)
 
     try:
         md = build_disassembler(args.arch, big_endian=args.big_endian)

@@ -40,6 +40,39 @@ VT_API_URL = "https://www.virustotal.com/api/v3/files/"
 DEFAULT_TIMEOUT = 30           # seconds for each HTTP request
 MAX_429_RETRIES = 3            # how many times to back off on quota errors
 FREE_TIER_SLEEP = 15           # seconds between requests on the free tier
+DEFAULT_CACHE = ".vt_cache.json"   # next to the scanned folder
+DEFAULT_CACHE_TTL_DAYS = 7         # consider entries older than this stale
+
+
+def load_cache(path):
+    """Returns (cache_dict, mtime_lookup_fn). Missing/corrupt cache → empty."""
+    if not path or not os.path.exists(path):
+        return {}
+    try:
+        with open(path, 'r') as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"{YELLOW}[!] Cache at {path} unreadable, starting fresh: {e}{RESET}",
+              file=sys.stderr)
+        return {}
+
+
+def save_cache(path, cache):
+    if not path:
+        return
+    try:
+        with open(path, 'w') as f:
+            json.dump(cache, f, indent=2)
+    except OSError as e:
+        print(f"{YELLOW}[!] Could not save cache: {e}{RESET}", file=sys.stderr)
+
+
+def cache_is_fresh(entry, ttl_days):
+    if ttl_days <= 0:
+        return True
+    ts = entry.get("_cached_at", 0)
+    age_days = (time.time() - ts) / 86400.0
+    return age_days < ttl_days
 
 
 def calculate_sha256(filepath):
@@ -162,6 +195,12 @@ def main():
     parser.add_argument("-o", "--output", help="Dump structured results to a JSON file")
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
                         help=f"HTTP timeout in seconds (default: {DEFAULT_TIMEOUT})")
+    parser.add_argument("--cache", default=DEFAULT_CACHE,
+                        help=f"Cache file (default: {DEFAULT_CACHE} in cwd; '' disables)")
+    parser.add_argument("--cache-ttl", type=int, default=DEFAULT_CACHE_TTL_DAYS,
+                        help=f"Cache TTL in days (default: {DEFAULT_CACHE_TTL_DAYS}; 0 = never expire)")
+    parser.add_argument("--no-cache", action="store_true",
+                        help="Disable cache reads & writes for this run")
     args = parser.parse_args()
 
     # --- SECRETS LOADING ---
@@ -210,7 +249,14 @@ def main():
 
     print(f"--- Scanning {len(files_to_scan)} files in: {args.folder} (Skipped: {skipped_count}) ---")
 
+    cache_path = "" if args.no_cache else args.cache
+    cache = load_cache(cache_path)
+    if cache_path:
+        print(f"{CYAN}[i] Cache: {cache_path} ({len(cache)} entries, TTL {args.cache_ttl}d){RESET}")
+
     results = []
+    cache_hits = 0
+    api_calls_made = 0
 
     for i, filepath in enumerate(files_to_scan):
         filename = os.path.basename(filepath)
@@ -219,12 +265,28 @@ def main():
         if not file_hash:
             continue
 
+        cached = cache.get(file_hash)
+        if cached and cache_is_fresh(cached, args.cache_ttl):
+            print(f"{CYAN}[cache] {filename}  ({cached.get('verdict','?')}){RESET}")
+            results.append(cached)
+            cache_hits += 1
+            continue
+
         result = check_virustotal(file_hash, api_key, timeout=args.timeout)
         record = summarise(filename, file_hash, result)
+        record["_cached_at"] = time.time()
         results.append(record)
+        cache[file_hash] = record
+        api_calls_made += 1
+
+        # Persist cache after each successful API call so a Ctrl-C does not
+        # waste the requests already spent.
+        save_cache(cache_path, cache)
 
         if not args.premium and i < len(files_to_scan) - 1:
             time.sleep(FREE_TIER_SLEEP)
+
+    print(f"\n[+] Cache hits: {cache_hits}  |  API calls: {api_calls_made}")
 
     if args.output:
         try:

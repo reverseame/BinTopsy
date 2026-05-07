@@ -82,7 +82,7 @@ def color_for_cc(cc):
 
 def generate_call_graph(binary_path, output_pdf, start_func=None, max_depth=5, min_cc=0):
     log(f"Opening {binary_path}...")
-    r2 = r2pipe.open(binary_path)
+    r2 = r2pipe.open(binary_path, flags=['-2'])
 
     log("Analyzing binary (aaa)...")
     r2.cmd("aaa")
@@ -121,6 +121,11 @@ def generate_call_graph(binary_path, output_pdf, start_func=None, max_depth=5, m
 
             visited.add(curr_name)
             nodes_to_draw.add(curr_name)
+
+            # Only known functions can be queried with axffj; raw addresses
+            # and imports just become leaves (no further recursion).
+            if curr_name not in func_meta:
+                continue
 
             refs = r2.cmdj(f"axffj @ {curr_name}") or []
             for ref in refs:

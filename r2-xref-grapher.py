@@ -95,7 +95,9 @@ def find_import_xrefs(r2, imp, flag_index):
     for addr in candidates:
         xrefs = r2.cmdj(f"axtj {addr}") or []
         for x in xrefs:
-            if x.get('type', '') in ('c', 'C', 'j', 'J'):
+            # r2 5.x emits 'CALL' / 'JMP' / 'CODE'; older versions used 'c' / 'j'.
+            t = (x.get('type') or '').lower()
+            if t in ('c', 'call', 'j', 'jmp', 'code'):
                 callers.add(x.get('from'))
     return list(callers)
 

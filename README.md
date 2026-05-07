@@ -24,14 +24,17 @@ tracing API usage, and clustering functions via fuzzy hashes.
 |----|------------------------------|---------------------------------------------------------------|-----------------------|
 | 1  | `entropy-viz.py`             | 2D Shannon-entropy heatmap of a binary                        | numpy, matplotlib     |
 | 2  | `disasm.py`                  | CLI disassembler (x86/x64/ARM/MIPS) for files & hex strings   | capstone              |
-| 3  | `yara-chunk-scanner.py`      | Chunked, recursive YARA scanner with cross-chunk overlap      | yara-python           |
-| 4  | `vt-folder-scan.py`          | Hash-only VirusTotal triage of a folder                       | requests, dotenv      |
-| 5  | `r2-dissector.py`            | Radare2 dissector → JSON + CFG / call-graph PDFs              | r2pipe, graphviz      |
+| 3  | `yara-chunk-scanner.py`      | Chunked, recursive YARA scanner; parallel directory mode      | yara-python           |
+| 4  | `vt-folder-scan.py`          | Hash-only VirusTotal triage of a folder, with local cache     | requests, dotenv      |
+| 5  | `r2-dissector.py`            | Radare2 dissector → JSON + CFG / call-graph PDFs + HTML index | r2pipe, graphviz      |
 | 6  | `sda-hashes.py`              | Enriches dissector JSON with TLSH / ssdeep fuzzy hashes       | python-tlsh, ssdeep   |
 | 7  | `r2-call-tracer.py`          | Brute-force call tracer (also resolves indirect IAT calls)    | r2pipe                |
-| 8  | `json-behavior-analyzer.py`  | Behavioural matrix from a call-tracer JSON                    | stdlib                |
+| 8  | `json-behavior-analyzer.py`  | Behavioural matrix + MITRE ATT&CK Navigator layer             | stdlib                |
 | 9  | `r2-call-graph.py`           | Targeted call graph rooted at a specific function (BFS depth) | r2pipe, graphviz      |
 | 10 | `r2-xref-grapher.py`         | CFGs of every function calling a given API                    | r2pipe, graphviz      |
+| 11 | `bintopsy-cluster.py`        | Cluster similar functions across enriched JSONs               | python-tlsh / ssdeep  |
+| 12 | `bintopsy-diff.py`           | Structural diff between two dissector JSONs (with rename det.)| python-tlsh (opt.)    |
+| 13 | `bintopsy-report.py`         | Single-command pipeline → self-contained HTML report          | all of the above      |
 
 ---
 
@@ -112,9 +115,9 @@ python yara-chunk-scanner.py memory_dump.raw ./rules/malware.yar -p 4194304
 ```
 
 **B. Bulk directory scan** — recursive directory of files vs. directory of
-rules:
+rules, in parallel across 8 workers:
 ```bash
-python yara-chunk-scanner.py ./extracted_files/ ./rules_repo/ -p 4096
+python yara-chunk-scanner.py ./extracted_files/ ./rules_repo/ -p 4096 -j 8
 ```
 
 **C. Disable cross-chunk overlap** — for performance when rules have only
@@ -142,6 +145,10 @@ python vt-folder-scan.py ./incident_response_data --premium -o triage.json
 ```bash
 python vt-folder-scan.py ./suspicious --max-size 10485760   # skip > 10 MB
 ```
+
+**D. Cache** — results are persisted to `.vt_cache.json` (TTL 7 days by
+default), so re-running on the same folder is free. Tweak with
+`--cache-ttl 30` or disable with `--no-cache`.
 
 ### 5. Radare2 dissector (`r2-dissector.py`)
 
@@ -204,6 +211,18 @@ ones:
 python json-behavior-analyzer.py call_trace.json --verbose
 ```
 
+**C. ATT&CK Navigator layer + machine-readable findings**:
+```bash
+python json-behavior-analyzer.py call_trace.json \
+    --json findings.json --attack-layer attack_layer.json
+```
+Drag `attack_layer.json` into <https://mitre-attack.github.io/attack-navigator/>
+to visualise techniques observed in the sample.
+
+> POSIX equivalents (`open`, `socket`, `ptrace`, `mmap`, `dlopen`, …) are
+> mapped alongside the Windows API names, so the analyser is useful for
+> Linux and macOS samples too.
+
 ### 9. Targeted call graph (`r2-call-graph.py`)
 
 Generates a focused call graph rooted at a specific function. Complements
@@ -242,6 +261,79 @@ python r2-xref-grapher.py samples/malware.exe RegOpenKey --partial
 
 > Default matching is **exact** (case-insensitive) to avoid false positives.
 
+### 11. Function similarity clustering (`bintopsy-cluster.py`)
+
+Group near-duplicate functions across one or more enriched JSONs (output of
+`sda-hashes.py`). Useful for finding shared code between malware variants
+or detecting statically-linked libraries.
+
+**A. Single-binary cluster** — find duplicate functions inside one sample:
+```bash
+python bintopsy-cluster.py samples/malware_enriched.json -t 60
+```
+
+**B. Cross-sample family detection** — feed several enriched JSONs:
+```bash
+python bintopsy-cluster.py family/*_enriched.json -t 70 \
+    --csv shared_code.csv --dendrogram tree.pdf
+```
+
+Cross-sample clusters are tagged `(cross-sample)`, surfacing the most
+interesting matches first. The `--dendrogram` flag is optional and needs
+SciPy + Matplotlib.
+
+### 12. Structural diff between binaries (`bintopsy-diff.py`)
+
+Compare two dissector JSONs side by side: added / removed / modified
+functions. If both inputs were enriched with TLSH, the script will also
+flag likely **renames** (a removal-and-addition pair whose TLSH distance
+is low enough to be the same code under a different name).
+
+```bash
+python bintopsy-diff.py samples/v1_enriched.json samples/v2_enriched.json
+```
+
+Save the diff as JSON for downstream tooling:
+```bash
+python bintopsy-diff.py v1.json v2.json --json diff.json
+```
+
+### 13. End-to-end pipeline (`bintopsy-report.py`)
+
+One command runs the full BinTopsy stack on a binary and produces a
+self-contained HTML report indexing every artifact:
+
+```bash
+python bintopsy-report.py samples/malware.exe -o ./report
+open ./report/index.html
+```
+
+The pipeline runs: dissector → fuzzy hashing → call tracer → behavioural
+matrix + ATT&CK layer → entropy heatmap → CFG gallery → global call graph.
+
+Useful flags:
+- `--no-graph-all` skip the per-function CFG batch (slow on big binaries).
+- `--no-call-graph` skip the global call graph.
+- `--yara rules.yar` add a YARA scan to the pipeline.
+
+---
+
+## Running the test suite
+
+```bash
+pip install pytest
+pytest tests/ -v
+```
+
+The suite is split in two:
+- `tests/test_smoke.py` — every script must run `--help` cleanly.
+- `tests/test_functional.py` — compiles a tiny C program once per session
+  (skipped if no compiler is on `PATH`) and runs each tool against it,
+  verifying outputs are well-formed.
+
+Tests that depend on `radare2`, `dot` or `yara` skip cleanly when those
+binaries are missing.
+
 ---
 
 ## Suggested pipeline
@@ -272,6 +364,28 @@ The radare2 toolchain is designed to compose. A typical analysis flow is:
                       ┌─────────────────────┐
                       │  r2-call-graph.py   │ ──► targeted call graph (PDF)
                       └─────────────────────┘
+```
+
+For one-shot analysis of a single binary, `bintopsy-report.py` orchestrates
+the whole tree and emits a self-contained HTML report:
+
+```text
+   binary ──► bintopsy-report.py ──► report/index.html
+                                      ├── dissect.json
+                                      ├── dissect_enriched.json
+                                      ├── calls.json
+                                      ├── behaviour.json
+                                      ├── attack_layer.json   ← MITRE Navigator
+                                      ├── entropy.pdf
+                                      └── graphs/             ← CFGs + call graph
+                                          └── index.html
+```
+
+For comparing or clustering several samples:
+
+```text
+   *_enriched.json (N files) ──► bintopsy-cluster.py ──► clusters / dendrogram
+   v1.json + v2.json         ──► bintopsy-diff.py    ──► added/removed/renamed
 ```
 
 ---

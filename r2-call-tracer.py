@@ -124,7 +124,10 @@ def analyze_calls(filename, pretty_print=True):
         ops = r2.cmdj(f"pdfj @ {f_addr}")
         if ops and 'ops' in ops:
             for op in ops['ops']:
-                if op.get('type') not in ('call', 'ucall', 'rcall', 'ircall'):
+                # Lowercase normalization in case a future r2 version starts
+                # emitting 'CALL' / 'UCALL' / etc.
+                op_type = (op.get('type') or '').lower()
+                if op_type not in ('call', 'ucall', 'rcall', 'ircall'):
                     continue
 
                 target_name, target_addr = resolve_target(r2, op, flag_cache)

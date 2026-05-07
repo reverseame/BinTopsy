@@ -22,8 +22,15 @@ yara-python>=4.3.0       # yara-chunk-scanner.py
 requests>=2.31.0         # vt-folder-scan.py
 python-dotenv>=1.0.0     # vt-folder-scan.py
 
-# --- Fuzzy hashing (sda-hashes.py) ---
+# --- Fuzzy hashing (sda-hashes.py, bintopsy-cluster.py, bintopsy-diff.py) ---
 # ssdeep needs `libfuzzy-dev` (Debian/Ubuntu) or `ssdeep` (Homebrew).
 # python-tlsh ships its own native code.
 ssdeep>=3.4
 python-tlsh>=4.5.0
+
+# --- Optional ---
+# Only needed for bintopsy-cluster.py --dendrogram (hierarchical clustering plots).
+# scipy>=1.11.0
+
+# --- Test runner (only for `pytest tests/`) ---
+# pytest>=8.0.0
