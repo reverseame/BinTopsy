@@ -1,1 +1,25 @@
+# Secrets
 secrets.env
+.env
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+
+# BinTopsy outputs
+out.json
+*_enriched.json
+entropy_heatmap.*
+graph.pdf
+r2_graphs/
+xref_graphs/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

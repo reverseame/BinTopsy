@@ -1,0 +1,29 @@
+# BinTopsy - Python dependencies
+#
+# Install with:    pip install -r requirements.txt
+#
+# Some packages require system libraries to build their native extensions.
+# See the "System dependencies" section in the README before installing.
+
+# --- Disassembly / Code analysis ---
+capstone>=5.0.0          # disasm.py
+r2pipe>=1.8.0            # r2-*.py  (also requires the radare2 binary in PATH)
+
+# --- Visualization & numerics ---
+numpy>=1.24.0            # entropy-viz.py
+matplotlib>=3.7.0        # entropy-viz.py
+graphviz>=0.20.0         # r2-dissector.py, r2-call-graph.py, r2-xref-grapher.py
+                         # (also requires the `dot` binary from system Graphviz)
+
+# --- Pattern matching ---
+yara-python>=4.3.0       # yara-chunk-scanner.py
+
+# --- Threat intelligence / VirusTotal ---
+requests>=2.31.0         # vt-folder-scan.py
+python-dotenv>=1.0.0     # vt-folder-scan.py
+
+# --- Fuzzy hashing (sda-hashes.py) ---
+# ssdeep needs `libfuzzy-dev` (Debian/Ubuntu) or `ssdeep` (Homebrew).
+# python-tlsh ships its own native code.
+ssdeep>=3.4
+python-tlsh>=4.5.0
